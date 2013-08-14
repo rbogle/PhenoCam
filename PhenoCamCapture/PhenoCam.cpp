@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "PhenoCam.h"
 #include "ConfigFile.h"
+#include "Utility.h"
 #include <windows.h>
 #include <direct.h>
 #include <time.h>
@@ -12,7 +13,6 @@ LoggerPtr PhenoCam::logger(Logger::getLogger("PhenoCam"));
 
 PhenoCam::PhenoCam()
 {	
-
     m_hFactory = NULL;
 
     for (int i=0; i< MAX_CAMERAS; i++)
@@ -21,45 +21,39 @@ PhenoCam::PhenoCam()
         m_hView[i] = NULL;
         m_hThread[i] = NULL;
     }
-	m_SysStatus = CLOSED;
-	m_CapStatus = READY;
-    m_CameraCount = 0;
-	
-	string cwd = getCWD();
-	string cfgfile = cwd+string(CONFIG_FILE_NAME);
-	ConfigFile cfg(cfgfile);
-	//get or set path for writing images 
-	if(cfg.keyExists(CONFIG_KEY_OUTPATH)){
-		m_FilePath = cfg.getValueOfKey<std::string>(CONFIG_KEY_OUTPATH);
-		LOG4CXX_DEBUG(logger,"Read from cfg file -- key: "<< CONFIG_KEY_OUTPATH <<" value: "<< m_FilePath.c_str());
-	}else{
-		m_FilePath = getCWD();
-		LOG4CXX_DEBUG(logger,"Set m_filepath to cwd as: "<<m_FilePath.c_str());
+	m_iSysStatus = CLOSED;
+	m_iCapStatus = READY;
+    m_iCameraCount = 0;
+	m_sFilePath = NULL;
+	m_iNIRFramesCapd=0;
+	m_iRGBFramesCapd=0;
+	m_iMaxFrames=1;
+	m_iSysOpMode=ONE_SHOT;
+}
+
+PhenoCam::Configure(string cfgfile){
+
+	if(cfgfile==NULL){
+		string cwd = utility::getCWD();
+		cfgfile = cwd+string(CONFIG_FILE_NAME);
 	}
 
-	BOOL retval;
+	ConfigFile cfg(cfgfile);
 
-    // Open factory & camera
-    retval = OpenFactoryAndCamera();
-	if(retval){
-		if (m_hCam[0]){
-			LOG4CXX_INFO(logger, "RGB Camera Opened.");
-			m_SysStatus = m_SysStatus ^ RGB_FAIL; // clear the flag with xor
-		}
-		else{
-            LOG4CXX_ERROR(logger,"No RGB camera found");
-			m_SysStatus = m_SysStatus | RGB_FAIL; // set the flag with or
-		}
-		if (m_hCam[1]){
-            LOG4CXX_INFO(logger, "NIR Camera Opened.");
-			m_SysStatus = m_SysStatus ^ NIR_FAIL; // clear the flag with xor
-		}else{
-            LOG4CXX_ERROR(logger,"No NIR camera found");
-			m_SysStatus = m_SysStatus | NIR_FAIL; // set the flag with or
-		}
+	//get or set path for writing images use CWD if not spec'd in config
+	if(cfg.keyExists(CONFIG_KEY_OUTPATH)){
+		m_sFilePath = cfg.getValueOfKey<std::string>(CONFIG_KEY_OUTPATH);
+		LOG4CXX_DEBUG(logger,"Read from cfg file -- key: "<< CONFIG_KEY_OUTPATH <<" value: "<< m_sFilePath.c_str());
 	}else{
-		LOG4CXX_ERROR(logger,"Camera discovery and initalization failed!");
-    }
+		m_sFilePath = utility::getCWD();
+		LOG4CXX_DEBUG(logger,"Set m_filepath to cwd as: "<<m_sFilePath.c_str());
+	}
+	if(cfg.keyExists(CONFIG_SYSOPMODE){
+		
+	}else{
+		m_iMaxFrames = 1;
+		m_iSysOpMode = ONE_SHOT;
+	}
 }
 
 PhenoCam::~PhenoCam(void)
@@ -161,8 +155,8 @@ BOOL PhenoCam::OpenFactoryAndCamera()
 		if(iValidCamera >= MAX_CAMERAS)
 			break;
     }
-    m_CameraCount = min(iValidCamera, MAX_CAMERAS);
-
+    m_iCameraCount = min(iValidCamera, MAX_CAMERAS);
+	m_iSysStatus = READY;
 	return TRUE;
 }
 
@@ -191,6 +185,7 @@ void PhenoCam::CloseFactoryAndCamera()
         m_hFactory = NULL;
         LOG4CXX_INFO(logger,"Closed factory");
     }
+	m_iSysStatus = CLOSED;
 }
 //--------------------------------------------------------------------------------------------------
 // StreamCBFuncRGB
@@ -203,7 +198,6 @@ void PhenoCam::StreamCBFuncRGB(J_tIMAGE_INFO * pAqImageInfo)
 	time_t currtime;
 	LOG4CXX_DEBUG(logger,"Entering StreamCBFuncRGB. CapStatus is: "<<(int) m_CapStatus);
 
-	
 	//send command to stop aquiring
     if (m_hCam[0])
     {
@@ -251,7 +245,7 @@ void PhenoCam::StreamCBFuncNIR(J_tIMAGE_INFO * pAqImageInfo)
     string filename;
 	time_t currtime;
 	LOG4CXX_DEBUG(logger,"Entering StreamCBFuncNIR. CapStatus is: "<<(int) m_CapStatus);
-;
+
 	//send command to stop aquiring
 	//stop stream for nir
     if (m_hCam[1]){
@@ -388,7 +382,7 @@ void PhenoCam::Capture(){
 // Status
 //--------------------------------------------------------------------------------------------------
 uint8_t PhenoCam::Status(){
-	return m_SysStatus;
+	return m_iSysStatus;
 }
 //--------------------------------------------------------------------------------------------------
 // is_Ready
@@ -396,42 +390,34 @@ uint8_t PhenoCam::Status(){
 bool PhenoCam::is_Ready(){
 	if (m_hCam[0]){
 		LOG4CXX_INFO(logger,"RGB Camera: " << m_sCameraId[0] << " open!"); // Display camera ID
-		m_SysStatus = m_SysStatus ^ RGB_FAIL; // clear the flag with xor
+		m_iSysStatus = m_iSysStatus ^ RGB_FAIL; // clear the flag with xor
 	}
 	else{
         LOG4CXX_ERROR(logger,"No RGB camera found");
-		m_SysStatus = m_SysStatus | RGB_FAIL; // set the flag with or
+		m_iSysStatus = m_iSysStatus | RGB_FAIL; // set the flag with or
 	}
 	if (m_hCam[1]){
         LOG4CXX_INFO(logger,"NIR Camera: " << m_sCameraId[1] << " open !"); // Display camera ID
-		m_SysStatus = m_SysStatus ^ NIR_FAIL; // clear the flag with xor
+		m_iSysStatus = m_iSysStatus ^ NIR_FAIL; // clear the flag with xor
 	}else{
         LOG4CXX_ERROR(logger,"No NIR camera found");
-		m_SysStatus = m_SysStatus | NIR_FAIL; // set the flag with or
+		m_iSysStatus = m_iSysStatus | NIR_FAIL; // set the flag with or
 	}
-	if(m_SysStatus)return false;
+	if(m_iSysStatus)return false;
 	else return true;
 }
 
 //--------------------------------------------------------------------------------------------------
 // GetFilePath
 //--------------------------------------------------------------------------------------------------
-string PhenoCam::Get_FilePath(){
-	return m_FilePath;
+string PhenoCam::Get_ImageFilePath(){
+	return m_sFilePath;
 }
 //--------------------------------------------------------------------------------------------------
 // SetFilePath
 //--------------------------------------------------------------------------------------------------
-void PhenoCam::Set_FilePath(string filepath){
-	m_FilePath = filepath;
+void PhenoCam::Set_ImageFilePath(string filepath){
+	m_sFilePath = filepath;
 }
-//--------------------------------------------------------------------------------------------------
-// getCWD
-//--------------------------------------------------------------------------------------------------
- string PhenoCam::getCWD(){
-	char cCurrentPath[FILENAME_MAX];
- 	_getcwd(cCurrentPath, sizeof(cCurrentPath));
-	string cwd(cCurrentPath);
-	return cwd;
-}
+
 	
