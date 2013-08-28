@@ -189,6 +189,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\PhenoCamException.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\stdafx.cpp"
 				>
 				<FileConfiguration
@@ -224,6 +228,10 @@
 			</File>
 			<File
 				RelativePath=".\PhenoCam.h"
+				>
+			</File>
+			<File
+				RelativePath=".\PhenoCamException.h"
 				>
 			</File>
 			<File

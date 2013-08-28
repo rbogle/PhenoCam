@@ -9,13 +9,14 @@
 
 #include <stdio.h>
 #include <tchar.h>
-
-#include "log4cxx/logger.h"
 #include <iostream>
 #include <string>
 #include <sstream>
+#include <stdexcept>
 #include <map>
 #include <fstream>
+#include <vector>
 
-
+//non standard libs
+#include "log4cxx/logger.h"
 // TODO: reference additional headers your program requires here
