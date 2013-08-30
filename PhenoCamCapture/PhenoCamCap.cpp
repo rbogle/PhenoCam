@@ -17,11 +17,18 @@ int _tmain(int argc, _TCHAR* argv[])
 	string logfile = exd+string(CONFIG_FILE_NAME);
 	PropertyConfigurator::configure(logfile.c_str());
 	PhenoCam ph;
-	string out = ph.Get_ImageFilePath();
+
 	LOG4CXX_INFO(logger, "EXE File path is set to: " << exd.c_str());
-	LOG4CXX_INFO(logger, "Output File path is set to: " << out.c_str());
 	LOG4CXX_INFO(logger, "Starting Capture...");
-	ph.Capture();
-	LOG4CXX_INFO(logger, "Capture finished.");
+	if( ph.Open()){
+		LOG4CXX_INFO(logger, "Camera init and config sucess");
+		string out = ph.Get_ImageFilePath();
+		LOG4CXX_INFO(logger, "Output File path is set to: " << out.c_str());
+		ph.Capture();
+		LOG4CXX_INFO(logger, "Capture finished.");
+	}else{
+		LOG4CXX_ERROR(logger, "Camera init failed!");
+	}
 	LOG4CXX_INFO(logger, "Closing Cameras...");
+	ph.Close();
 }

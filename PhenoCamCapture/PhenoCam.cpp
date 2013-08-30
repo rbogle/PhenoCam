@@ -4,12 +4,13 @@
 #include "Utility.h"
 #include <windows.h>
 #include <direct.h>
-#include <time.h>
+#include <ctime>
 
 using namespace std;
 using namespace log4cxx;
 
 LoggerPtr PhenoCam::logger(Logger::getLogger("PhenoCam"));
+LoggerPtr PhenoCam::shotlog(Logger::getLogger("ShotLog"));
 
 PhenoCam::PhenoCam()
 {	
@@ -37,7 +38,7 @@ PhenoCam::~PhenoCam(void)
 	// Close factory & camera
 	this->Close();
 	delete m_cCfg;
-	delete &m_vSequences;
+
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -176,33 +177,42 @@ void PhenoCam::Close()
 //--------------------------------------------------------------------------------------------------
 void PhenoCam::StreamCBFuncRGB(J_tIMAGE_INFO * pAqImageInfo)
 {
-	stringstream ts;
+	
 	J_STATUS_TYPE retval;
     string filename;
-	time_t currtime;
+	stringstream ts;
 	LOG4CXX_DEBUG(logger,"Entering StreamCBFuncRGB. CapStatus is: "<<(int) m_iCapStatus);
 	LOG4CXX_DEBUG(logger,"StreamCBFuncRGB. CapMode is: "<<(int) this->m_iSysOpMode);
 	if(this->m_iSysOpMode != CONTINUOUS){
 		//new frame captured
 		this->m_iRGBFramesCapd++;
 		//save it
-		// Update timestamp create filename with time and frame info
-		time(&currtime);
-		ts<<currtime;
-		ts<<"_"<<this->m_iRGBFramesCapd;
-		filename = m_sFilePath + "/RGB_" + ts.str() + ".tif";
+		if(m_iRGBFramesCapd<10) ts<<0;
+		ts<< (int) m_iRGBFramesCapd;
+		filename = m_sFilePath + "\\RGB_" + m_sTimeStamp + ts.str() + ".tif";
 		//convert and write file
-		SaveImageToFile(pAqImageInfo,filename);
-		LOG4CXX_INFO(logger,"StreamCBFuncRGB Wrote file: "<<filename.c_str());
-		//Time to close out or retrigger? 
+		if(SaveImageToFile(pAqImageInfo,filename)){
+			LOG4CXX_INFO(logger,"StreamCBFuncRGB Wrote file: "<<filename.c_str());
+			LOG4CXX_INFO(shotlog,filename.c_str());
+		}else{
+			LOG4CXX_ERROR(logger,"StreamCBFuncRGB failed to write file: "<<filename.c_str());
+		}
+		//Time to close out or retrigger, we only need on callback to regtrigger 
 		if(this->m_iRGBFramesCapd < this->m_iMaxFrames){ 
 			this->TriggerFrame(0);
 		}else{//We're done! close it up
+
 			//unset rgb_busy flag
 			if(m_iCapStatus==RGB_BUSY || m_iCapStatus==AQUIRING){
 				m_iCapStatus = m_iCapStatus^RGB_BUSY;
 			}
 			LOG4CXX_DEBUG(logger,"StreamCBFuncRGB CapStatus is: "<<(int) m_iCapStatus)
+			// Stop Acquision
+			if (m_hCam[0]) {
+				retval = J_Camera_ExecuteCommand(m_hCam[0], NODE_NAME_ACQSTOP);
+				LOG4CXX_DEBUG(logger,"StreamCBFuncRGB Stopped rgb Aquisition");
+			}
+			//stop thread
 			if(m_hThread[0])
 			{
 				// close stream
@@ -223,25 +233,25 @@ void PhenoCam::StreamCBFuncRGB(J_tIMAGE_INFO * pAqImageInfo)
 //--------------------------------------------------------------------------------------------------
 void PhenoCam::StreamCBFuncNIR(J_tIMAGE_INFO * pAqImageInfo)
 {
-	stringstream ts;
 	J_STATUS_TYPE retval;
     string filename;
-	time_t currtime;
+	stringstream ts;
 	LOG4CXX_DEBUG(logger,"Entering StreamCBFuncNIR. CapStatus is: "<<(int) m_iCapStatus);
 	LOG4CXX_DEBUG(logger,"StreamCBFuncNIR. CapMode is: "<<(int) this->m_iSysOpMode);
 	if(this->m_iSysOpMode != CONTINUOUS){
 		//new frame captured
 		this->m_iNIRFramesCapd++;
 		//save it
-		// Update timestamp create filename
-		time(&currtime);
-		ts<<currtime;
-		ts<<"_"<<this->m_iNIRFramesCapd;
-		//ts << pAqImageInfo->iTimeStamp;
-		filename = m_sFilePath + "/NIR_" + ts.str() + ".tif";
+		if(m_iNIRFramesCapd<10) ts<<0;
+		ts<< (int) m_iNIRFramesCapd;
+		filename = m_sFilePath + "\\NIR_" + m_sTimeStamp + ts.str() + ".tif";
 		//convert and write file
-		SaveImageToFile(pAqImageInfo,filename);
-		LOG4CXX_INFO(logger,"StreamCBFuncNIR Wrote file: "<<filename.c_str());
+		if(SaveImageToFile(pAqImageInfo,filename)){
+			LOG4CXX_INFO(logger,"StreamCBFuncNIR Wrote file: "<<filename.c_str());
+			LOG4CXX_INFO(shotlog,filename.c_str());
+		}else{
+			LOG4CXX_ERROR(logger,"StreamCBFuncNIR failed to write file: "<<filename.c_str());
+		}
 		//Time to close out or retrigger? Retrigger is done by RGB thread because we are set to sync
 		if(this->m_iNIRFramesCapd >= this->m_iMaxFrames){ //We're done! close it up
 		
@@ -250,6 +260,11 @@ void PhenoCam::StreamCBFuncNIR(J_tIMAGE_INFO * pAqImageInfo)
 				m_iCapStatus = m_iCapStatus^NIR_BUSY;
 			}
 			LOG4CXX_DEBUG(logger,"StreamCBFuncNIR CapStatus is: "<<(int) m_iCapStatus)
+			// Stop Acquision
+			if (m_hCam[1]) {
+				retval = J_Camera_ExecuteCommand(m_hCam[1], NODE_NAME_ACQSTOP);
+				LOG4CXX_DEBUG(logger,"StreamCBFuncNIR Stopped NIR Aquisition");
+			}
 
 			if(m_hThread[1])
 			{
@@ -345,13 +360,13 @@ void PhenoCam::StopAcquire(){
 	J_STATUS_TYPE   retval;
 	this->m_iCapStatus=READY;
 	for(int i=0; i<MAX_CAMERAS; i++){
-		if (m_hCam[i]){
-			// Stop Acquision
-			if (m_hCam[i]) {
-				retval = J_Camera_ExecuteCommand(m_hCam[i], NODE_NAME_ACQSTOP);
-				LOG4CXX_DEBUG(logger,"StreamCBFuncNIR Stopped NIR Aquisition");
-			}
+
+		// Stop Acquision
+		if (m_hCam[i]) {
+			retval = J_Camera_ExecuteCommand(m_hCam[i], NODE_NAME_ACQSTOP);
+			LOG4CXX_DEBUG(logger,"StreamCBFuncNIR Stopped NIR Aquisition");
 		}
+
 		//TODO: Need to destroy view handle and close window.
 		if(m_hThread[i])
 		{
@@ -398,7 +413,10 @@ void PhenoCam::Capture(){
     int64_t pixelFormat;
     int     bpp = 0;
     SIZE	ViewSize;
-	
+	time_t currtime;
+	struct tm * timeinfo;
+	char timebuff[80];
+
 	this->m_iNIRFramesCapd=0;
 	this->m_iRGBFramesCapd=0;
 	//init streams & send aquire cmd
@@ -444,17 +462,27 @@ void PhenoCam::Capture(){
 				m_iCapStatus = m_iCapStatus | NIR_BUSY; //set busy flag
                 LOG4CXX_INFO(logger,"Opening NIR stream succeeded. CapStatus is: "<< (int) m_iCapStatus);
             }
-            
+			//Now start image acquisition
+			retval = J_Camera_ExecuteCommand(m_hCam[i], NODE_NAME_ACQSTART);
+			if (retval != J_ST_SUCCESS) {
+				LOG4CXX_ERROR(logger,"Sending cmd "<<NODE_NAME_ACQSTART<<" failed for Sensor: "<<i);
+			}else{
+				LOG4CXX_INFO(logger,"Sending cmd "<<NODE_NAME_ACQSTART<<" succeeded");
+			}   
 		}
 	
     }
-
+	// Update timestamp create filename with time and frame info
+	time(&currtime);
+	timeinfo = localtime(&currtime);
+	strftime(timebuff,80,"%Y-%m-%dT%H-%M-%S_",timeinfo);
+	this->m_sTimeStamp=string(timebuff);
 	//If we are not doing conintuous mode then toggle softwaretrigger0
 	//we fire to Cam0 only since they are set to sync
 	if(this->m_iSysOpMode!=CONTINUOUS) this->TriggerFrame(0); 
 	//wait if status active
 	while(m_iCapStatus>0){
-		LOG4CXX_INFO(logger,"Waiting for Aquire to finish. CapStatus is: "<<(int)m_iCapStatus);
+		LOG4CXX_INFO(logger,"Waiting for Acquire to finish. CapStatus is: "<<(int)m_iCapStatus);
 		Sleep(100);
 	}
 	
@@ -506,7 +534,7 @@ void PhenoCam::Set_ImageFilePath(string filepath){
 //	-- reads in configuration file and sets parameters, called by initalized
 //	-- throws PhenoCamException if operation mode setup fails. 
 //--------------------------------------------------------------------------------------------------
-void PhenoCam::Configure(string cfgfile=""){
+void PhenoCam::Configure(string cfgfile){
 	J_STATUS_TYPE retval;
 	NODE_HANDLE hNode;
 
@@ -666,19 +694,19 @@ void PhenoCam::SetupOneShotMode(){
 			}
 
 			// Set LineSelector="CameraTrigger0" 
-			status = J_Camera_SetValueString(m_hCam[i],"LineSelector", "CameraTrigger0");
+			status = J_Camera_SetValueString(m_hCam[i],"TriggerSelector", "CameraTrigger0");
 			if(status != J_ST_SUCCESS) 
 			{
-				err = "Could not set LineSelector!";
+				err = "Could not set TriggerSelector!";
 				LOG4CXX_ERROR(logger, err.c_str());
 				throw PhenoCamException(err, PCEXCEPTION_CONFOSTFAIL);
 			}
 
 			// Set LineSource="SoftwareTrigger0" 
-			status = J_Camera_SetValueString(m_hCam[i],"LineSource", "SoftwareTrigger0");
+			status = J_Camera_SetValueString(m_hCam[i],"TriggerSource", "UserOutput0");
 			if(status != J_ST_SUCCESS) 
 			{
-				err= "Could not set LineSource!";
+				err= "Could not set TriggerSource!";
 				LOG4CXX_ERROR(logger, err.c_str());
 				throw PhenoCamException(err, PCEXCEPTION_CONFOSTFAIL);
 			}
@@ -744,32 +772,31 @@ void PhenoCam::SetupSequenceMode(){
 	uint8_t frames = 0;
 	string node = prefix+delim+sqnum; //PhenoCam.NumberOfSequences;
 	if(m_cCfg->keyExists(node)){
-		frames = m_cCfg->getValueOfKey<uint8_t>(node);
+		frames = m_cCfg->getValueOfKey<int>(node);
 		frames = min(frames, MAX_FRAMES);
 		//if(frames>1){ //?
 		m_iMaxFrames = frames;
 		Sequence* s;
 		for(int i=1; i<frames+1; i++){
 			s = new Sequence;
-			s->id = i;
+			s->id = i-1;
 			stringstream intss; 
 			intss << i;
 			string num = intss.str();
 			node = prefix+delim+sqnode+delim+num+delim+sqgain; //PhenoCam.Sequence.i.Gain
-			if(m_cCfg->keyExists(node)) s->gain = m_cCfg->getValueOfKey<int16_t>(node);
+			if(m_cCfg->keyExists(node)) s->gain = m_cCfg->getValueOfKey<int>(node);
 			node = prefix+delim+sqnode+delim+num+delim+sqexp; //PhenoCam.Sequence.i.Exposure;
-			if(m_cCfg->keyExists(node)) s->shutterL = m_cCfg->getValueOfKey<uint16_t>(node);
+			if(m_cCfg->keyExists(node)) s->shutterL = m_cCfg->getValueOfKey<int>(node);
 			node = prefix+delim+sqnode+delim+num+delim+sqwidth; //PhenoCam.Sequence.i.Width;
-			if(m_cCfg->keyExists(node)) s->width = m_cCfg->getValueOfKey<uint16_t>(node);
+			if(m_cCfg->keyExists(node)) s->width = m_cCfg->getValueOfKey<int>(node);
 			node =prefix+delim+sqnode+delim+num+delim+sqheight; //PhenoCam.Sequence.i.Height;
-			if(m_cCfg->keyExists(node)) s->height = m_cCfg->getValueOfKey<uint16_t>(node);
+			if(m_cCfg->keyExists(node)) s->height = m_cCfg->getValueOfKey<int>(node);
 			node = prefix+delim+sqnode+delim+num+delim+sqoffx; //PhenoCam.Sequence.i.OffsetX;
-			if(m_cCfg->keyExists(node)) s->offsetx = m_cCfg->getValueOfKey<uint16_t>(node);
+			if(m_cCfg->keyExists(node)) s->offsetx = m_cCfg->getValueOfKey<int>(node);
 			node = prefix+delim+sqnode+delim+num+delim+sqoffy; //PhenoCam.Sequence.i.OffsetY;
-			if(m_cCfg->keyExists(node)) s->offsety = m_cCfg->getValueOfKey<uint16_t>(node);
+			if(m_cCfg->keyExists(node)) s->offsety = m_cCfg->getValueOfKey<int>(node);
 			m_vSequences.push_back(*s);
 			delete s;
-			delete intss;
 		}
 	}else throw PhenoCamException("No Sequences specified in config", PCEXCEPTION_NOSEQINFO);
 	//Now set params in camera....
@@ -790,19 +817,19 @@ void PhenoCam::SetupSequenceMode(){
 	    }
 
 	    // Set LineSelector="CameraTrigger0" 
-	    status = J_Camera_SetValueString(m_hCam[cam],"LineSelector", "CameraTrigger0");
+	    status = J_Camera_SetValueString(m_hCam[cam],"TriggerSelector", "CameraTrigger0");
 	    if(status != J_ST_SUCCESS) 
 	    {
-			err = "Could not set LineSelector!";
+			err = "Could not set TriggerSelector!";
 		    LOG4CXX_ERROR(logger, err.c_str());
 		    throw PhenoCamException(err, PCEXCEPTION_CONFSEQFAIL);
 	    }
 
 	    // Set LineSource="SoftwareTrigger0" 
-	    status = J_Camera_SetValueString(m_hCam[cam],"LineSource", "SoftwareTrigger0");
+	    status = J_Camera_SetValueString(m_hCam[cam],"TriggerSource", "UserOutput0");
 	    if(status != J_ST_SUCCESS) 
 	    {
-			err= "Could not set LineSource!";
+			err= "Could not set TriggerSource!";
 		    LOG4CXX_ERROR(logger, err.c_str());
 		    throw PhenoCamException(err, PCEXCEPTION_CONFSEQFAIL);
 	    }
@@ -865,7 +892,7 @@ void PhenoCam::SetupSequenceMode(){
 				LOG4CXX_ERROR(logger,"Could not get SequenceROISizeX node handle!");
 			}
 
-			//if width is 0 or greater than max use max
+			//if width is either 0 or greater than max use max
 			int64_t max;
 			J_Node_GetMaxInt64(hNode, &max);
 			if(s.width==0 || s.width>max) int64Val=max;
@@ -879,7 +906,7 @@ void PhenoCam::SetupSequenceMode(){
 			{
 				LOG4CXX_ERROR(logger,"Could not get SequenceROISizeY node handle!");
 			}
-			//if height is 0 or greater than max use max
+			//if height is either0 or greater than max use max
 			J_Node_GetMaxInt64(hNode, &max);
 			if(s.height==0 || s.height>max) int64Val=max;
 			else int64Val=s.height;
@@ -893,7 +920,8 @@ void PhenoCam::SetupSequenceMode(){
 		{
 			err = "Could not execute SequenceSaveCommand command!";
 			LOG4CXX_ERROR(logger, err.c_str());
-			throw PhenoCamException(err, PCEXCEPTION_CONFSEQFAIL);
+			//not throwable because if the settings on the camera are the same, it wont save!
+			//throw PhenoCamException(err, PCEXCEPTION_CONFSEQFAIL);
 		}
 
 	}
@@ -905,7 +933,7 @@ void PhenoCam::SetupSequenceMode(){
 /	-- public member method calls OpenFactoryAndCamera then Configure
 /	-- will fail if either throws exception and return false. 
 /------------------------------------------------------------------------------------------------*/
-bool PhenoCam::Open(string confpath = ""){
+bool PhenoCam::Open(string confpath){
 	try{
 		this->OpenFactoryAndCamera();
 		this->Configure(confpath);

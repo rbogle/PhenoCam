@@ -77,9 +77,11 @@ public:
 	~PhenoCam(void);
 
 	static log4cxx::LoggerPtr logger;
+	static log4cxx::LoggerPtr shotlog;
+
 	void Set_ImageFilePath(string filepath);
 	string Get_ImageFilePath(void);
-	bool Open(string confpath); //always call to start.
+	bool Open(string confpath=""); //always call to start.
 	void Capture(void); //to be used for one-shot or sequence
 	void StopAcquire(void); //to be called for continuous live view
 	void StartAcquire(void); // to be called to close live view
@@ -104,6 +106,7 @@ protected:
 	uint8_t			m_iMaxFrames; // 1++
 	uint8_t			m_iSysOpMode; // oneshot, sequence, continuous
 	vector<Sequence>	m_vSequences; //use to hold sequence info for loading to camera.
+	string			m_sTimeStamp;
 
 	//Callback functions for image arrival
 	void StreamCBFuncRGB(J_tIMAGE_INFO * pAqImageInfo);
@@ -111,7 +114,7 @@ protected:
 	//main functions to config camera capture sequences	
 	void SetCaptureMode(uint8_t capmode); //config camera to oneshot,sequence, or continuous
 	void TriggerFrame(uint8_t cam); //Sends the SoftwareTrigger to camera
-	void Configure(string cfgfile); //read config file and set parameters
+	void Configure(string cfgfile=""); //read config file and set parameters
 	void ParseConfigMode(); //parse read config file for capture mode setting
 	void OpenFactoryAndCamera(void);
 	void SetupSequenceMode(void);
