@@ -57,6 +57,8 @@ using namespace std;
 #define NIR_FAIL 2
 #define CLOSED 3
 
+#define TIMEOUT 100
+
 class Sequence{
 public:
 	Sequence(){
@@ -83,6 +85,7 @@ public:
 	string Get_ImageFilePath(void);
 	bool Open(string confpath=""); //always call to start.
 	void Capture(void); //to be used for one-shot or sequence
+	void Reset(void); //to be used to issue a device_reset cmd
 	void StopAcquire(void); //to be called for continuous live view
 	void StartAcquire(void); // to be called to close live view
 	void Close(void); //always called when finished

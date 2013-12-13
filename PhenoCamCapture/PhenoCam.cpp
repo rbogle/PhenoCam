@@ -405,6 +405,7 @@ bool PhenoCam::SaveImageToFile(J_tIMAGE_INFO* ptRawImageInfo, string sFileName)
 
 //--------------------------------------------------------------------------------------------------
 // Capture
+// failure to initialize streams, send ACQStart, or finish before timeout with throw exception. 
 //--------------------------------------------------------------------------------------------------
 void PhenoCam::Capture(){
 
@@ -444,9 +445,10 @@ void PhenoCam::Capture(){
             {
                 retval = J_Image_OpenStream(m_hCam[i], 0, reinterpret_cast<J_IMG_CALLBACK_OBJECT>(this), reinterpret_cast<J_IMG_CALLBACK_FUNCTION>(&PhenoCam::StreamCBFuncRGB), &m_hThread[i], (ViewSize.cx*ViewSize.cy*bpp)/8);
                 if (retval != J_ST_SUCCESS) {
-                    LOG4CXX_ERROR(logger,"Could not open RGB stream!");
+					string msg = "Could not open RGB stream!";
+					LOG4CXX_ERROR(logger,msg.c_str());
 					m_iCapStatus = m_iCapStatus ^ RGB_BUSY; //clear flag we failed to open stream
-                    break;
+					throw PhenoCamException(msg.c_str(),PCEXCEPTION_RGBSTREAMFAIL);
                 }
 				m_iCapStatus = m_iCapStatus | RGB_BUSY; //set busy flag
 				LOG4CXX_INFO(logger,"Opening RGB stream succeeded. CapStatus is: "<<(int) m_iCapStatus);
@@ -455,9 +457,10 @@ void PhenoCam::Capture(){
             {
                 retval = J_Image_OpenStream(m_hCam[i], 0, reinterpret_cast<J_IMG_CALLBACK_OBJECT>(this), reinterpret_cast<J_IMG_CALLBACK_FUNCTION>(&PhenoCam::StreamCBFuncNIR), &m_hThread[i], (ViewSize.cx*ViewSize.cy*bpp)/8);
                 if (retval != J_ST_SUCCESS) {
-                    LOG4CXX_ERROR(logger,"Could not open NIR stream!");
+					string msg = "Could not open NIR stream!";
+					LOG4CXX_ERROR(logger,msg.c_str());
 					m_iCapStatus = m_iCapStatus ^ NIR_BUSY; //clear flag we failed to open stream
-                    break;
+                    throw PhenoCamException(msg.c_str(),PCEXCEPTION_NIRSTREAMFAIL);
                 }
 				m_iCapStatus = m_iCapStatus | NIR_BUSY; //set busy flag
                 LOG4CXX_INFO(logger,"Opening NIR stream succeeded. CapStatus is: "<< (int) m_iCapStatus);
@@ -465,7 +468,9 @@ void PhenoCam::Capture(){
 			//Now start image acquisition
 			retval = J_Camera_ExecuteCommand(m_hCam[i], NODE_NAME_ACQSTART);
 			if (retval != J_ST_SUCCESS) {
-				LOG4CXX_ERROR(logger,"Sending cmd "<<NODE_NAME_ACQSTART<<" failed for Sensor: "<<i);
+				stringstream msg; msg<<"Sending cmd "<<NODE_NAME_ACQSTART<<" failed for Sensor: "<<i;
+				LOG4CXX_ERROR(logger,msg.str());
+				throw PhenoCamException(msg.str(), PCEXCEPTION_ACQSTART_FAIL);
 			}else{
 				LOG4CXX_INFO(logger,"Sending cmd "<<NODE_NAME_ACQSTART<<" succeeded");
 			}   
@@ -480,12 +485,18 @@ void PhenoCam::Capture(){
 	//If we are not doing conintuous mode then toggle softwaretrigger0
 	//we fire to Cam0 only since they are set to sync
 	if(this->m_iSysOpMode!=CONTINUOUS) this->TriggerFrame(0); 
-	//wait if status active
-	while(m_iCapStatus>0){
+	//wait if status active, but only wait TIMEOUT iterations
+	int wait = 0; 
+	while(m_iCapStatus>0 && wait<TIMEOUT ){
 		LOG4CXX_INFO(logger,"Waiting for Acquire to finish. CapStatus is: "<<(int)m_iCapStatus);
 		Sleep(100);
+		wait++;
 	}
-	
+	//We broke out of wait due to timeout so log and throw error
+	if(m_iCapStatus>0) {
+		LOG4CXX_ERROR(logger,"Wait for successful capture exceeded timeout");
+		throw PhenoCamException("Wait for successful capture exceeded timeout", PCEXCEPTION_CAP_TIMEOUT);
+	}
 
 }
 //--------------------------------------------------------------------------------------------------
@@ -626,7 +637,7 @@ void PhenoCam::Configure(string cfgfile){
 				retval = J_Camera_SetValueString(m_hCam[i], "PixelFormat", (int8_t*) nirpxfmt.c_str());
                 if (retval != J_ST_SUCCESS)
                 {
-					string err = "Could not set RGB.PixelFormat: "+nirpxfmt+"!";
+					string err = "Could not set NIR.PixelFormat: "+nirpxfmt+"!";
                     LOG4CXX_ERROR(logger,err.c_str());
                     throw PhenoCamException(err,PCEXCEPTION_PXFMTFAIL);
                 }
@@ -995,4 +1006,16 @@ void PhenoCam::TriggerFrame(uint8_t cam){
 		    return;
 	    }
     }
+}
+
+void PhenoCam::Reset(){
+		J_STATUS_TYPE status;
+		for(int i=0; i<MAX_CAMERAS; i++){
+			// Issue DeviceReset
+			status = J_Camera_ExecuteCommand(m_hCam[i], "DeviceReset");
+			if(status != J_ST_SUCCESS) 
+			{
+				LOG4CXX_ERROR(logger,"Could not execute DeviceReset command!");
+			}
+		}
 }
